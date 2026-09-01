@@ -551,21 +551,22 @@ def create_zip_archive(clips: list, zip_path: str) -> str:
     return zip_path
 
 def generate_sample_demo(job_dir: str):
-    t1 = np.ones((240, 420, 3), dtype=np.uint8) * 230
-    cv2.rectangle(t1, (20, 20), (400, 220), (30, 30, 200), -1)
-    cv2.putText(t1, "FAST 100", (60, 130), cv2.FONT_HERSHEY_DUPLEX, 2.0, (255, 255, 255), 4)
-    cv2.putText(t1, "BREAKING NEWS", (90, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 100), 2)
+    width, height, fps = 640, 360, 25
+    
+    t1 = np.ones((height, width, 3), dtype=np.uint8) * 30
+    cv2.rectangle(t1, (40, 40), (600, 320), (30, 30, 200), -1)
+    cv2.putText(t1, "FAST 100", (120, 190), cv2.FONT_HERSHEY_DUPLEX, 2.8, (255, 255, 255), 5)
+    cv2.putText(t1, "BREAKING NEWS", (160, 270), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 100), 3)
 
-    t2 = np.ones((240, 420, 3), dtype=np.uint8) * 40
-    cv2.rectangle(t2, (20, 20), (400, 220), (0, 140, 255), -1)
-    cv2.putText(t2, "SPEED NEWS", (45, 130), cv2.FONT_HERSHEY_DUPLEX, 1.8, (255, 255, 255), 4)
-    cv2.putText(t2, "SPECIAL BULLETIN", (80, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (20, 20, 20), 2)
+    t2 = np.ones((height, width, 3), dtype=np.uint8) * 40
+    cv2.rectangle(t2, (40, 40), (600, 320), (0, 140, 255), -1)
+    cv2.putText(t2, "SPEED NEWS", (100, 190), cv2.FONT_HERSHEY_DUPLEX, 2.5, (255, 255, 255), 5)
+    cv2.putText(t2, "SPECIAL BULLETIN", (140, 270), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (20, 20, 20), 3)
 
     _, t1_png = cv2.imencode(".png", t1)
     _, t2_png = cv2.imencode(".png", t2)
 
     video_path = os.path.join(job_dir, "sample_demo_video.mp4")
-    width, height, fps = 640, 360, 25
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
     total_frames = 25 * fps
@@ -574,9 +575,9 @@ def generate_sample_demo(job_dir: str):
         sec = f / fps
         frame = np.zeros((height, width, 3), dtype=np.uint8)
         if 8.0 <= sec < 9.0:
-            frame = cv2.resize(t1, (width, height))
+            frame = t1.copy()
         elif 16.0 <= sec < 17.0:
-            frame = cv2.resize(t2, (width, height))
+            frame = t2.copy()
         else:
             bg_color = (int(sec * 10) % 255, 80, 120)
             frame[:] = bg_color
@@ -589,6 +590,7 @@ def generate_sample_demo(job_dir: str):
         {"name": "Transition Fast 100", "bytes": t1_png.tobytes(), "gray": prepare_template(t1_png.tobytes())},
         {"name": "Transition Speed News", "bytes": t2_png.tobytes(), "gray": prepare_template(t2_png.tobytes())}
     ]
+
 
 
 # ═══════════════════════════════════════════════════════════
