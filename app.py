@@ -758,7 +758,110 @@ with col_refs:
         with r_top_r:
             if st.button("➕ Add Custom Screenshot", key="btn_open_custom", type="primary", use_container_width=True):
                 st.session_state.show_custom_modal = not st.session_state.show_custom_modal
+                st.rerun()
 
+        # ── CUSTOM SCREENSHOT DRAWER (Inside Card 2) ──
+        if st.session_state.show_custom_modal:
+            st.markdown("""
+            <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 12px; padding: 14px; margin-bottom: 16px;">
+            """, unsafe_allow_html=True)
+            
+            m_head_l, m_head_r = st.columns([4, 1.2])
+            with m_head_l:
+                st.markdown('<div style="font-weight:700; color:#60A5FA; font-size:15px; display:flex; align-items:center; gap:6px;">📷 Add Custom Reference Screenshot</div>', unsafe_allow_html=True)
+            with m_head_r:
+                if st.button("✕ Close", key="close_custom_modal", use_container_width=True):
+                    st.session_state.show_custom_modal = False
+                    st.rerun()
+
+            tab_capture, tab_upload = st.tabs(["📷 Capture Frame from Video", "⬆ Upload Image File"])
+
+            with tab_capture:
+                if not st.session_state.video_path or not os.path.exists(st.session_state.video_path or ""):
+                    st.info("📹 Please upload a video first to extract frames.")
+                else:
+                    meta = st.session_state.video_meta or {}
+                    max_duration = float(meta.get("duration", 3600.0))
+                    seek_sec = st.slider(
+                        "Seek to timestamp (seconds)",
+                        0.0, max(max_duration, 1.0), 0.0, 0.25,
+                        format="%.2fs",
+                        key="frame_seek_slider"
+                    )
+                    st.caption(f"Selected position: **{format_timestamp(seek_sec)}**")
+
+                    # Live frame preview
+                    frame_bytes = extract_frame_at_timestamp(st.session_state.video_path, seek_sec)
+                    if frame_bytes:
+                        preview_img = Image.open(io.BytesIO(frame_bytes))
+                        st.image(preview_img, caption=f"Frame at {format_timestamp(seek_sec)}", use_column_width=True)
+
+                    frame_name = st.text_input(
+                        "Reference Label",
+                        value=f"Frame at {format_timestamp(seek_sec)}",
+                        key="frame_name_input"
+                    )
+
+                    if st.button("✅ Capture & Add Reference", type="primary", key="btn_save_frame", use_container_width=True):
+                        if frame_bytes:
+                            tmpl = prepare_template(frame_bytes)
+                            if tmpl is not None:
+                                lbl = (frame_name or f"Frame at {format_timestamp(seek_sec)}").strip()
+                                existing_labels = {r["name"] for r in st.session_state.ref_previews}
+                                if lbl in existing_labels:
+                                    lbl = f"{lbl} ({len(st.session_state.ref_previews)+1})"
+                                st.session_state.templates.append({"name": lbl, "gray": tmpl})
+                                st.session_state.ref_previews.append({"name": lbl, "bytes": frame_bytes})
+                                st.session_state.cut_points = []
+                                st.session_state.clips = []
+                                st.session_state.stage = "upload"
+                                st.session_state.show_custom_modal = False
+                                st.rerun()
+                            else:
+                                st.error("Could not process frame.")
+                        else:
+                            st.error("Failed to capture frame at this timestamp.")
+
+            with tab_upload:
+                custom_img = st.file_uploader(
+                    "Select Image File",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="custom_img_uploader"
+                )
+                if custom_img is not None:
+                    raw_preview = custom_img.getvalue()
+                    if raw_preview:
+                        st.image(Image.open(io.BytesIO(raw_preview)), use_column_width=True)
+                
+                custom_lbl = st.text_input(
+                    "Reference Label",
+                    value=Path(custom_img.name).stem if custom_img else "Custom Reference",
+                    key="custom_lbl_input"
+                )
+                if st.button("✅ Add Reference Image", type="primary", key="btn_add_img_ref", use_container_width=True):
+                    if custom_img is not None:
+                        raw = custom_img.getvalue()
+                        tmpl = prepare_template(raw)
+                        if tmpl is not None:
+                            lbl = (custom_lbl or Path(custom_img.name).stem).strip()
+                            existing_labels = {r["name"] for r in st.session_state.ref_previews}
+                            if lbl in existing_labels:
+                                lbl = f"{lbl} ({len(st.session_state.ref_previews)+1})"
+                            st.session_state.templates.append({"name": lbl, "gray": tmpl})
+                            st.session_state.ref_previews.append({"name": lbl, "bytes": raw})
+                            st.session_state.cut_points = []
+                            st.session_state.clips = []
+                            st.session_state.stage = "upload"
+                            st.session_state.show_custom_modal = False
+                            st.rerun()
+                        else:
+                            st.error("Could not process image.")
+                    else:
+                        st.warning("Please select an image file first.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Existing Reference Cards / Empty State ──
         if not st.session_state.ref_previews:
             st.markdown("""
             <div class="refs-empty">
@@ -770,6 +873,7 @@ with col_refs:
         else:
             cols_per_row = 3
             refs = st.session_state.ref_previews
+            to_delete = None
             for row_start in range(0, len(refs), cols_per_row):
                 row_refs = refs[row_start : row_start + cols_per_row]
                 ref_cols = st.columns(len(row_refs))
@@ -777,16 +881,25 @@ with col_refs:
                     idx = row_start + ci
                     with ref_cols[ci]:
                         st.markdown('<div class="ref-card-box">', unsafe_allow_html=True)
-                        pil_img = Image.open(io.BytesIO(rp["bytes"]))
-                        st.image(pil_img, use_column_width=True)
+                        try:
+                            pil_img = Image.open(io.BytesIO(rp["bytes"]))
+                            st.image(pil_img, use_column_width=True)
+                        except Exception:
+                            pass
                         st.markdown(f'<div class="ref-card-name" title="{rp["name"]}">{rp["name"]}</div>', unsafe_allow_html=True)
                         st.markdown('<span class="status-pill">✓ Ready</span>', unsafe_allow_html=True)
                         if st.button("🗑️ Remove", key=f"del_ref_{idx}", help=f"Remove {rp['name']}", use_container_width=True):
-                            st.session_state.ref_previews.pop(idx)
-                            st.session_state.templates.pop(idx)
-                            st.rerun()
+                            to_delete = idx
                         st.markdown('</div>', unsafe_allow_html=True)
+            
+            if to_delete is not None:
+                st.session_state.ref_previews.pop(to_delete)
+                st.session_state.templates.pop(to_delete)
+                st.session_state.cut_points = []
+                st.session_state.clips = []
+                st.rerun()
 
+        # ── Bulk Image Upload ──
         st.markdown('<div style="margin-top: 10px;"></div>', unsafe_allow_html=True)
         ref_files = st.file_uploader(
             "⬆ Upload Images",
@@ -802,67 +915,20 @@ with col_refs:
                 name = Path(rf.name).stem
                 if name not in existing:
                     raw = rf.read()
-                    tmpl = prepare_template(raw)
-                    if tmpl is not None:
-                        st.session_state.templates.append({"name": name, "gray": tmpl})
-                        st.session_state.ref_previews.append({"name": name, "bytes": raw})
-                        existing.add(name)
-                        added += 1
-            if added:
-                st.rerun()
-
-
-# ═══════════════════════════════════════════════════════════
-# 3. CUSTOM SCREENSHOT OPTION (Simple Tabbed Drawer)
-# ═══════════════════════════════════════════════════════════
-if st.session_state.show_custom_modal:
-    with st.container(border=True):
-        m_head_l, m_head_r = st.columns([5, 1])
-        with m_head_l:
-            st.markdown('<div class="card-title">📷 Add Custom Reference Screenshot</div>', unsafe_allow_html=True)
-        with m_head_r:
-            if st.button("✕ Close", key="close_custom_modal", use_container_width=True):
-                st.session_state.show_custom_modal = False
-                st.rerun()
-
-        tab_opt_b, tab_opt_a = st.tabs(["📷 Capture Frame from Video", "⬆ Upload Image File"])
-
-        with tab_opt_b:
-            if not st.session_state.video_path:
-                st.info("📹 Please upload a video first to extract frames.")
-            else:
-                meta = st.session_state.video_meta or {}
-                max_duration = float(meta.get("duration", 3600.0))
-                seek_sec = st.slider("Seek to timestamp (seconds)", 0.0, max_duration, 0.0, 0.5, format="%.2fs", key="frame_seek_slider")
-                st.caption(f"Selected position: {format_timestamp(seek_sec)}")
-                frame_name = st.text_input("Reference Name", value=f"Frame at {format_timestamp(seek_sec)}", key="frame_name_input")
-
-                if st.button("✅ Capture & Add Reference", type="primary", key="btn_save_frame"):
-                    fbytes = extract_frame_at_timestamp(st.session_state.video_path, seek_sec)
-                    if fbytes:
-                        tmpl = prepare_template(fbytes)
+                    if raw:
+                        tmpl = prepare_template(raw)
                         if tmpl is not None:
-                            lbl = frame_name or f"Frame at {format_timestamp(seek_sec)}"
-                            st.session_state.templates.append({"name": lbl, "gray": tmpl})
-                            st.session_state.ref_previews.append({"name": lbl, "bytes": fbytes})
-                            st.session_state.show_custom_modal = False
-                            st.rerun()
-                    else:
-                        st.error("Failed to capture frame.")
+                            st.session_state.templates.append({"name": name, "gray": tmpl})
+                            st.session_state.ref_previews.append({"name": name, "bytes": raw})
+                            existing.add(name)
+                            added += 1
+            if added:
+                st.session_state.cut_points = []
+                st.session_state.clips = []
+                st.session_state.stage = "upload"
+                st.rerun()
 
-        with tab_opt_a:
-            custom_img = st.file_uploader("Select Image File", type=["png", "jpg", "jpeg", "webp"], key="custom_img_uploader")
-            custom_lbl = st.text_input("Reference Label", value="Custom Reference", key="custom_lbl_input")
-            if st.button("Add as Reference Screenshot", type="primary", key="btn_add_img_ref"):
-                if custom_img:
-                    raw = custom_img.read()
-                    tmpl = prepare_template(raw)
-                    if tmpl is not None:
-                        lbl = custom_lbl or Path(custom_img.name).stem
-                        st.session_state.templates.append({"name": lbl, "gray": tmpl})
-                        st.session_state.ref_previews.append({"name": lbl, "bytes": raw})
-                        st.session_state.show_custom_modal = False
-                        st.rerun()
+
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1077,32 +1143,102 @@ if st.session_state.stage == "complete" and st.session_state.clips:
                     type="primary"
                 )
 
-        # Optional Individual Clips Download
+        # ── View Individual Clips with Embedded Player ──
         with st.expander(f"🎬 View Individual Clips ({len(st.session_state.clips)})", expanded=False):
-            clips_per_row = 3
+            st.markdown("""
+            <style>
+            /* Clip player card */
+            .clip-player-card {
+                background: #1A2436;
+                border: 1px solid #26334D;
+                border-radius: 14px;
+                padding: 14px;
+                margin-bottom: 18px;
+            }
+            .clip-player-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 10px;
+            }
+            .clip-player-num {
+                font-size: 15px;
+                font-weight: 700;
+                color: #FFFFFF;
+            }
+            .clip-player-badge {
+                font-size: 11px;
+                font-family: 'JetBrains Mono', monospace;
+                color: #10B981;
+                background: rgba(16,185,129,0.12);
+                border: 1px solid rgba(16,185,129,0.3);
+                border-radius: 6px;
+                padding: 2px 8px;
+            }
+            .clip-player-times {
+                font-size: 12.5px;
+                font-family: 'JetBrains Mono', monospace;
+                color: #94A3B8;
+                margin-bottom: 10px;
+            }
+            .clip-player-size {
+                font-size: 11px;
+                color: #64748B;
+                margin-top: 4px;
+            }
+            /* Make Streamlit video player fill width */
+            .clip-player-card [data-testid="stVideo"] video {
+                border-radius: 8px;
+                width: 100% !important;
+                background: #000;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
             clips = st.session_state.clips
+            clips_per_row = 2
+
             for row_start in range(0, len(clips), clips_per_row):
-                row_clips = clips[row_start : row_start + clips_per_row]
+                row_clips = clips[row_start: row_start + clips_per_row]
                 c_cols = st.columns(len(row_clips))
+
                 for ci, clip in enumerate(row_clips):
                     with c_cols[ci]:
                         st.markdown(f"""
-                        <div class="clip-simple-card">
-                          <div style="font-weight:700; color:#FFFFFF;">Clip {clip['number']:03d} ({clip['duration']:.1f}s)</div>
-                          <div style="font-size:12px; color:#94A3B8; font-family:JetBrains Mono,monospace;">{clip['formatted_start']} → {clip['formatted_end']}</div>
-                          <div style="font-size:11px; color:#64748B;">{clip['size_mb']} MB</div>
+                        <div class="clip-player-card">
+                          <div class="clip-player-header">
+                            <span class="clip-player-num">🎬 Clip {clip['number']:03d}</span>
+                            <span class="clip-player-badge">{clip['duration']:.1f}s</span>
+                          </div>
+                          <div class="clip-player-times">
+                            ⏱ {clip['formatted_start']} &nbsp;→&nbsp; {clip['formatted_end']}
+                          </div>
                         </div>
                         """, unsafe_allow_html=True)
+
                         if os.path.exists(clip["path"]):
+                            # Embedded video player — no autoplay, user clicks play
                             with open(clip["path"], "rb") as vf:
-                                st.download_button(
-                                    label=f"⬇ Download Clip {clip['number']:03d}",
-                                    data=vf.read(),
-                                    file_name=clip["filename"],
-                                    mime="video/mp4",
-                                    key=f"dl_clip_{clip['number']}",
-                                    use_container_width=True
-                                )
+                                video_bytes = vf.read()
+                            st.video(video_bytes)
+
+                            st.markdown(f'<div class="clip-player-size">💾 {clip["size_mb"]} MB &nbsp;|&nbsp; {clip["filename"]}</div>', unsafe_allow_html=True)
+
+                            # Download button below player
+                            st.download_button(
+                                label=f"⬇ Download Clip {clip['number']:03d}",
+                                data=video_bytes,
+                                file_name=clip["filename"],
+                                mime="video/mp4",
+                                key=f"dl_clip_{clip['number']}_{clip['filename']}",
+                                use_container_width=True
+                            )
+                        else:
+                            st.warning(f"⚠️ File not found: {clip['filename']}")
+
+                        st.markdown('<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
+
+
 
 # ── Footer ──
 st.markdown("""
