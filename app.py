@@ -382,6 +382,16 @@ def format_timestamp(seconds: float) -> str:
         return f"{hrs:02d}:{mins:02d}:{secs:05.2f}"
     return f"{mins:02d}:{secs:05.2f}"
 
+def safe_render_image(image_data, caption=None):
+    """Render image safely across all Streamlit versions (1.32.x up to 1.40+)."""
+    try:
+        st.image(image_data, caption=caption, use_container_width=True)
+    except (TypeError, Exception):
+        try:
+            st.image(image_data, caption=caption, use_column_width=True)
+        except (TypeError, Exception):
+            st.image(image_data, caption=caption)
+
 def get_video_metadata(video_path: str) -> dict:
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -876,7 +886,7 @@ with col_refs:
                     frame_bytes = extract_frame_at_timestamp(st.session_state.video_path, seek_sec)
                     if frame_bytes:
                         preview_img = Image.open(io.BytesIO(frame_bytes))
-                        st.image(preview_img, caption=f"Frame at {format_timestamp(seek_sec)}", use_column_width=True)
+                        safe_render_image(preview_img, caption=f"Frame at {format_timestamp(seek_sec)}")
 
                     frame_name = st.text_input(
                         "Reference Label",
@@ -913,7 +923,7 @@ with col_refs:
                 if custom_img is not None:
                     raw_preview = custom_img.getvalue()
                     if raw_preview:
-                        st.image(Image.open(io.BytesIO(raw_preview)), use_column_width=True)
+                        safe_render_image(Image.open(io.BytesIO(raw_preview)))
                 
                 custom_lbl = st.text_input(
                     "Reference Label",
@@ -965,7 +975,7 @@ with col_refs:
                         st.markdown('<div class="ref-card-box">', unsafe_allow_html=True)
                         try:
                             pil_img = Image.open(io.BytesIO(rp["bytes"]))
-                            st.image(pil_img, use_column_width=True)
+                            safe_render_image(pil_img)
                         except Exception:
                             pass
                         st.markdown(f'<div class="ref-card-name" title="{rp["name"]}">{rp["name"]}</div>', unsafe_allow_html=True)
