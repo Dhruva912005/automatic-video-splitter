@@ -507,25 +507,67 @@ def split_video_ffmpeg(video_path: str, cut_points: list, output_dir: str, durat
         clip_num = len(clips) + 1
         out_file = os.path.join(output_dir, f"clip_{clip_num:03d}.mp4")
         pct = i / max(1, total)
-        progress_bar.progress(pct)
-        stage_elem.markdown(
-            f'<div class="progress-stage">✂️ Cutting Clip {clip_num:03d}: {format_timestamp(start)} → {format_timestamp(end)} ({length:.1f}s)</div>',
-            unsafe_allow_html=True
-        )
+        try:
+            progress_bar.progress(pct)
+            stage_elem.markdown(
+                f'<div class="progress-stage">✂️ Cutting Clip {clip_num:03d}: {format_timestamp(start)} → {format_timestamp(end)} ({length:.1f}s)</div>',
+                unsafe_allow_html=True
+            )
+        except Exception:
+            pass
 
-        if cut_mode == "accurate":
-            cmd = ["ffmpeg", "-y", "-ss", str(start), "-i", video_path, "-t", str(length),
-                   "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-avoid_negative_ts", "make_zero", out_file]
-        else:
-            cmd = ["ffmpeg", "-y", "-ss", str(start), "-i", video_path, "-t", str(length),
-                   "-map", "0", "-c", "copy", "-avoid_negative_ts", "make_zero", out_file]
+        success = False
 
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if cut_mode == "fast":
+            # Stream copy — fast. -map 0:v maps video, -map 0:a? maps audio if it exists (? = optional, no error if missing)
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(start),
+                "-i", video_path,
+                "-t", str(length),
+                "-map", "0:v",
+                "-map", "0:a?",
+                "-c:v", "copy",
+                "-c:a", "copy",
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart",
+                out_file
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 1024:
+                success = True
 
-        if not os.path.exists(out_file) or os.path.getsize(out_file) == 0:
-            cmd_fb = ["ffmpeg", "-y", "-ss", str(start), "-i", video_path, "-t", str(length),
-                      "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", out_file]
-            subprocess.run(cmd_fb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not success:
+            # Accurate re-encode — always preserves audio by re-encoding to aac
+            # -map 0:a? means: include audio if source has it, skip silently if not
+            cmd = [
+                "ffmpeg", "-y",
+                "-ss", str(start),
+                "-i", video_path,
+                "-t", str(length),
+                "-map", "0:v",
+                "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart",
+                out_file
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if not (os.path.exists(out_file) and os.path.getsize(out_file) > 1024):
+                # Last resort: no audio mapping (video-only source)
+                cmd_vo = [
+                    "ffmpeg", "-y",
+                    "-ss", str(start),
+                    "-i", video_path,
+                    "-t", str(length),
+                    "-map", "0:v",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                    "-avoid_negative_ts", "make_zero",
+                    "-movflags", "+faststart",
+                    out_file
+                ]
+                subprocess.run(cmd_vo, capture_output=True, text=True)
 
         size_mb = round(os.path.getsize(out_file) / (1024 * 1024), 2) if os.path.exists(out_file) else 0
         clips.append({
@@ -540,8 +582,12 @@ def split_video_ffmpeg(video_path: str, cut_points: list, output_dir: str, durat
             "formatted_end": format_timestamp(end)
         })
 
-    progress_bar.progress(1.0)
+    try:
+        progress_bar.progress(1.0)
+    except Exception:
+        pass
     return clips
+
 
 def create_zip_archive(clips: list, zip_path: str) -> str:
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
