@@ -596,6 +596,36 @@ def create_zip_archive(clips: list, zip_path: str) -> str:
                 zf.write(c["path"], c["filename"])
     return zip_path
 
+
+def normalize_for_web(input_path: str, job_dir: str) -> str:
+    """
+    Remux/re-encode the uploaded video to a browser-compatible MP4:
+      - Video stream: copy as-is (no quality loss, very fast)
+      - Audio stream: re-encode to AAC 192 kbps (browser safe)
+      - Container:    MP4 with faststart (streamable)
+    Returns path to the normalized file. Falls back to original if FFmpeg fails.
+    """
+    out_path = os.path.join(job_dir, "uploaded_normalized.mp4")
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-map", "0:v",
+        "-map", "0:a?",          # include audio only if it exists
+        "-c:v", "copy",          # copy video — no re-encode, instant
+        "-c:a", "aac",           # re-encode audio to AAC (browser compatible)
+        "-b:a", "192k",
+        "-ar", "44100",          # standard sample rate
+        "-ac", "2",              # stereo
+        "-movflags", "+faststart",  # MP4 optimised for web streaming
+        "-avoid_negative_ts", "make_zero",
+        out_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
+        return out_path
+    # Fallback: return original if FFmpeg failed
+    return input_path
+
 def generate_sample_demo(job_dir: str):
     width, height, fps = 640, 360, 25
     
@@ -751,13 +781,17 @@ with col_video:
         if video_file is not None and st.session_state.video_filename != video_file.name:
             jdir = get_job_dir()
             ext = Path(video_file.name).suffix or ".mp4"
-            vpath = os.path.join(jdir, f"uploaded_video{ext}")
+            raw_path = os.path.join(jdir, f"uploaded_video{ext}")
             vbytes = video_file.read()
-            with open(vpath, "wb") as f:
+            with open(raw_path, "wb") as f:
                 f.write(vbytes)
+            # Normalize to web-compatible MP4 (H.264 + AAC) so browser plays audio
+            with st.spinner("⚙️ Preparing video for playback..."):
+                vpath = normalize_for_web(raw_path, jdir)
             meta = get_video_metadata(vpath)
             st.session_state.video_path = vpath
-            st.session_state.video_bytes = vbytes
+            # Store path instead of bytes to avoid large memory usage; read fresh on display
+            st.session_state.video_bytes = None
             st.session_state.video_meta = meta
             st.session_state.video_filename = video_file.name
             st.session_state.cut_points = []
@@ -788,8 +822,10 @@ with col_video:
             </div>
             """, unsafe_allow_html=True)
 
-            if st.session_state.video_bytes:
-                st.video(st.session_state.video_bytes)
+            # Always read from the normalized file path — ensures audio works in browser
+            if st.session_state.video_path and os.path.exists(st.session_state.video_path):
+                with open(st.session_state.video_path, "rb") as vf:
+                    st.video(vf.read())
 
 
 # ────────────────────────────────────────────────────────────
