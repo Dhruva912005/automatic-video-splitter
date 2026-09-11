@@ -792,9 +792,9 @@ with col_video:
             jdir = get_job_dir()
             ext = Path(video_file.name).suffix or ".mp4"
             raw_path = os.path.join(jdir, f"uploaded_video{ext}")
-            vbytes = video_file.read()
             with open(raw_path, "wb") as f:
-                f.write(vbytes)
+                video_file.seek(0)
+                shutil.copyfileobj(video_file, f)
             # Normalize to web-compatible MP4 (H.264 + AAC) so browser plays audio
             with st.spinner("⚙️ Preparing video for playback..."):
                 vpath = normalize_for_web(raw_path, jdir)

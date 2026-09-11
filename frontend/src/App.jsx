@@ -111,6 +111,13 @@ export default function App() {
   // 1. Upload Video
   const handleVideoUpload = async (file) => {
     if (!file) return;
+
+    const MAX_VIDEO_SIZE_MB = 500;
+    if (file.size > MAX_VIDEO_SIZE_MB * 1024 * 1024) {
+      alert(`Video file exceeds the maximum allowed size of ${MAX_VIDEO_SIZE_MB} MB.`);
+      return;
+    }
+
     setVideoFile(file);
     setCutPoints([]);
     setClips([]);

@@ -74,6 +74,9 @@ def init_job(job_id: Optional[str] = None) -> str:
     return job_id
 
 
+MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+
+
 @app.post("/api/upload-video")
 async def upload_video(
     video: UploadFile = File(...),
@@ -82,13 +85,25 @@ async def upload_video(
     job_id = init_job(job_id)
     job_dir = get_job_dir(job_id)
     
-    # Save video file
+    # Save video file with 500 MB maximum size limit validation
     ext = os.path.splitext(video.filename)[1].lower() or ".mp4"
     saved_filename = f"original_video{ext}"
     video_path = os.path.join(job_dir, saved_filename)
     
+    MAX_VIDEO_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
+    uploaded_bytes = 0
     with open(video_path, "wb") as f:
-        shutil.copyfileobj(video.file, f)
+        while True:
+            chunk = video.file.read(1024 * 1024)
+            if not chunk:
+                break
+            uploaded_bytes += len(chunk)
+            if uploaded_bytes > MAX_VIDEO_SIZE_BYTES:
+                f.close()
+                if os.path.exists(video_path):
+                    os.remove(video_path)
+                raise HTTPException(status_code=413, detail="Video file exceeds maximum allowed limit of 500 MB.")
+            f.write(chunk)
         
     # Inspect video metadata with OpenCV
     cap = cv2.VideoCapture(video_path)
